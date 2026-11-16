@@ -35,10 +35,20 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-const wrap=fn=>(req,res)=>{try{res.json(fn(req))}catch(e){res.status(400).json({error:e.message})}};
+const wrap=fn=>(req,res)=>{try{res.json(fn(req))}catch(e){res.status(e.status===409?409:400).json({error:e.message})}};
 app.get('/api/jobs',wrap(()=>db.prepare('SELECT * FROM jobs ORDER BY id DESC').all()));app.post('/api/jobs',wrap(req=>{if(!req.body.title?.trim())throw Error('Title required');return db.prepare('INSERT INTO jobs(title,department,location) VALUES(?,?,?)').run(req.body.title.trim(),req.body.department||null,req.body.location||null)}));
 app.get('/api/candidates',wrap(req=>db.prepare('SELECT candidates.*,jobs.title job FROM candidates JOIN jobs ON jobs.id=candidates.job_id WHERE (? IS NULL OR job_id=?) ORDER BY candidates.id DESC').all(req.query.job_id||null,req.query.job_id||null)));
-app.post('/api/candidates',wrap(req=>{const {name,email,job_id}=req.body;if(!name?.trim()||!/^\S+@\S+\.\S+$/.test(email||'')||!job_id)throw Error('Name, email and job required');return db.prepare('INSERT INTO candidates(name,email,job_id) VALUES(?,?,?)').run(name.trim(),email,job_id)}));
+app.post('/api/candidates',wrap(req=>{
+ const {name,email,job_id}=req.body;
+ if(!name?.trim()||!/^\S+@\S+\.\S+$/.test(email||'')||!Number.isSafeInteger(Number(job_id))||Number(job_id)<1)
+   throw Error('Valid name, email, and job are required');
+ const normalized=email.trim().toLowerCase();
+ return db.transaction(()=>{
+   const found=db.prepare('SELECT id FROM candidates WHERE job_id=? AND lower(email)=?').get(Number(job_id),normalized);
+   if(found){const error=new Error('Candidate already applied to this job');error.status=409;throw error}
+   return db.prepare('INSERT INTO candidates(name,email,job_id) VALUES(?,?,?)').run(name.trim(),normalized,Number(job_id));
+ }).immediate();
+}));
 app.patch('/api/candidates/:id/stage',wrap(req=>{if(!['applied','screening','interview','offer','hired','rejected'].includes(req.body.stage))throw Error('Invalid stage');const r=db.prepare('UPDATE candidates SET stage=? WHERE id=?').run(req.body.stage,req.params.id);if(!r.changes)throw Error('Candidate not found');return {updated:true}}));
 app.get('/api/candidates/:id/notes',wrap(req=>db.prepare('SELECT * FROM interview_notes WHERE candidate_id=? ORDER BY id DESC').all(req.params.id)));app.post('/api/candidates/:id/notes',wrap(req=>{if(!req.body.note?.trim())throw Error('Note required');return db.prepare('INSERT INTO interview_notes(candidate_id,note) VALUES(?,?)').run(req.params.id,req.body.note.trim())}));
 app.get('/api/candidates/:id/history', (req,res)=>{
