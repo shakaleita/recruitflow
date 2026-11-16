@@ -21,6 +21,20 @@ app.get('/api/candidates',wrap(req=>db.prepare('SELECT candidates.*,jobs.title j
 app.post('/api/candidates',wrap(req=>{const {name,email,job_id}=req.body;if(!name?.trim()||!/^\S+@\S+\.\S+$/.test(email||'')||!job_id)throw Error('Name, email and job required');return db.prepare('INSERT INTO candidates(name,email,job_id) VALUES(?,?,?)').run(name.trim(),email,job_id)}));
 app.patch('/api/candidates/:id/stage',wrap(req=>{if(!['applied','screening','interview','offer','hired','rejected'].includes(req.body.stage))throw Error('Invalid stage');const r=db.prepare('UPDATE candidates SET stage=? WHERE id=?').run(req.body.stage,req.params.id);if(!r.changes)throw Error('Candidate not found');return {updated:true}}));
 app.get('/api/candidates/:id/notes',wrap(req=>db.prepare('SELECT * FROM interview_notes WHERE candidate_id=? ORDER BY id DESC').all(req.params.id)));app.post('/api/candidates/:id/notes',wrap(req=>{if(!req.body.note?.trim())throw Error('Note required');return db.prepare('INSERT INTO interview_notes(candidate_id,note) VALUES(?,?)').run(req.params.id,req.body.note.trim())}));
+// Safe, read-only CSV export for the local candidates dataset.
+app.get('/api/export/candidates.csv', (_req,res)=>{
+  try {
+    const {serialize}=require('./lib/csv');
+    const stmt=db.prepare("SELECT id,name,email,job_id,stage,created_at FROM candidates ORDER BY id");
+    const rows=stmt.all();
+    const columns=stmt.columns().map(column=>column.name);
+    res.set('Content-Type','text/csv; charset=utf-8');
+    res.set('Content-Disposition','attachment; filename="candidates.csv"');
+    res.set('Cache-Control','no-store');
+    res.send(serialize(rows,columns));
+  }catch(_error){res.status(500).json({error:'CSV export unavailable'})}
+});
+
 // Lightweight service introspection: intentionally no secrets or database contents.
 app.get('/api/health',(_req,res)=>{try{db.prepare('SELECT 1').get();res.json({status:'ok',service:process.env.npm_package_name||'portfolio-service'})}catch(_e){res.status(503).json({status:'unavailable'})}});
 app.get('/api/insights',(_req,res)=>{try{res.json((()=>{ const stages=db.prepare('SELECT stage,COUNT(*) count FROM candidates GROUP BY stage ORDER BY stage').all();const open_jobs=db.prepare('SELECT COUNT(*) n FROM jobs WHERE open=1').get().n;const interviews=db.prepare('SELECT COUNT(*) n FROM interview_notes').get().n;return {candidates_by_stage:stages,open_jobs,interview_notes:interviews}; })())}catch(_e){res.status(500).json({error:'Unable to load insights'})}});
