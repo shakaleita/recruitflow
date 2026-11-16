@@ -51,6 +51,25 @@ app.get('/api/candidates/:id/history', (req,res)=>{
   res.json(events);
 });
 
+// Aggregate hiring funnel by job. This endpoint does not disclose candidates' PII.
+app.get('/api/recruiting/funnel',(_req,res)=>{
+  try {
+    const jobs=db.prepare(`SELECT j.id,j.title,j.open,
+       COUNT(c.id) AS applicants,
+       COALESCE(SUM(CASE WHEN c.stage='screening' THEN 1 ELSE 0 END),0) AS screening,
+       COALESCE(SUM(CASE WHEN c.stage='interview' THEN 1 ELSE 0 END),0) AS interviewing,
+       COALESCE(SUM(CASE WHEN c.stage='offer' THEN 1 ELSE 0 END),0) AS offers,
+       COALESCE(SUM(CASE WHEN c.stage='hired' THEN 1 ELSE 0 END),0) AS hired,
+       COALESCE(SUM(CASE WHEN c.stage='rejected' THEN 1 ELSE 0 END),0) AS rejected
+       FROM jobs j LEFT JOIN candidates c ON c.job_id=j.id
+       GROUP BY j.id ORDER BY j.id DESC`).all();
+    const result=jobs.map(j=>({...j,hiring_rate_percent:j.applicants?
+      Math.round(1000*j.hired/j.applicants)/10:0}));
+    res.set('Cache-Control','no-store');
+    res.json({jobs:result,candidates:result.reduce((n,j)=>n+j.applicants,0)});
+  }catch(_error){res.status(500).json({error:'Unable to calculate hiring funnel'})}
+});
+
 // Safe, read-only CSV export for the local candidates dataset.
 app.get('/api/export/candidates.csv', (_req,res)=>{
   try {
