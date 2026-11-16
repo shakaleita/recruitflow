@@ -1,4 +1,20 @@
 const express=require('express'),Database=require('better-sqlite3');const app=express(),db=new Database(process.env.DB_FILE||'app.db');db.pragma('foreign_keys=ON');db.exec(`CREATE TABLE IF NOT EXISTS jobs(id INTEGER PRIMARY KEY,title TEXT NOT NULL,department TEXT,location TEXT,open INTEGER NOT NULL DEFAULT 1);CREATE TABLE IF NOT EXISTS candidates(id INTEGER PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL,job_id INTEGER NOT NULL REFERENCES jobs(id),stage TEXT NOT NULL DEFAULT 'applied',created_at TEXT DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS interview_notes(id INTEGER PRIMARY KEY,candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,note TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)`);app.disable('x-powered-by');app.use((req,res,next)=>{res.set('X-Content-Type-Options','nosniff');res.set('Referrer-Policy','no-referrer');res.set('X-Frame-Options','DENY');next()});app.use(express.json({limit:'32kb'}));app.use(express.static('public'));
+
+const crypto = require('node:crypto');
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health') return next();
+  const required = process.env.API_TOKEN;
+  if (!required && process.env.APP_ENV !== 'production') return next();
+  if (!required) return res.status(503).json({error:'API authentication must be configured in production'});
+  const actual = req.get('x-api-token') || '';
+  const expectedBytes = Buffer.from(required, 'utf8');
+  const actualBytes = Buffer.from(actual, 'utf8');
+  if (expectedBytes.length !== actualBytes.length || !crypto.timingSafeEqual(expectedBytes, actualBytes)) {
+    return res.status(401).json({error:'Unauthorized'});
+  }
+  next();
+});
+
 const wrap=fn=>(req,res)=>{try{res.json(fn(req))}catch(e){res.status(400).json({error:e.message})}};
 app.get('/api/jobs',wrap(()=>db.prepare('SELECT * FROM jobs ORDER BY id DESC').all()));app.post('/api/jobs',wrap(req=>{if(!req.body.title?.trim())throw Error('Title required');return db.prepare('INSERT INTO jobs(title,department,location) VALUES(?,?,?)').run(req.body.title.trim(),req.body.department||null,req.body.location||null)}));
 app.get('/api/candidates',wrap(req=>db.prepare('SELECT candidates.*,jobs.title job FROM candidates JOIN jobs ON jobs.id=candidates.job_id WHERE (? IS NULL OR job_id=?) ORDER BY candidates.id DESC').all(req.query.job_id||null,req.query.job_id||null)));
