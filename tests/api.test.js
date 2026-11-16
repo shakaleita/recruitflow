@@ -72,3 +72,18 @@ test('workflow history captures one transition and ignores no-op updates', async
 
   assert.equal((await json(base,'/api/candidates/999999/history'))[0],404);
 });
+
+test('recruitment funnel reports per-job counts without applicant PII',async t=>{
+  const {child,dir,base}=await start();
+  t.after(()=>{child.kill();rmSync(dir,{recursive:true,force:true})});
+  await json(base,'/api/jobs','POST',{title:'Privacy-aware recruiter'});
+  await json(base,'/api/candidates','POST',{name:'Private Candidate',email:'private@example.com',job_id:1});
+  await json(base,'/api/candidates/1/stage','PATCH',{stage:'hired'});
+  const [status,report]=await json(base,'/api/recruiting/funnel');
+  assert.equal(status,200);
+  assert.equal(report.candidates,1);
+  assert.equal(report.jobs[0].hired,1);
+  assert.equal(report.jobs[0].hiring_rate_percent,100);
+  assert.ok(!JSON.stringify(report).includes('private@example.com'));
+  assert.ok(!JSON.stringify(report).includes('Private Candidate'));
+});
