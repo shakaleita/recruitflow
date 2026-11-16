@@ -87,3 +87,18 @@ test('recruitment funnel reports per-job counts without applicant PII',async t=>
   assert.ok(!JSON.stringify(report).includes('private@example.com'));
   assert.ok(!JSON.stringify(report).includes('Private Candidate'));
 });
+
+test('candidate email uniqueness is case-insensitive per job',async t=>{
+ const {child,dir,base}=await start();
+ t.after(()=>{child.kill();rmSync(dir,{recursive:true,force:true})});
+ await json(base,'/api/jobs','POST',{title:'Engineer role'});
+ await json(base,'/api/jobs','POST',{title:'Designer role'});
+ assert.equal((await json(base,'/api/candidates','POST',
+   {name:'A',email:'person@example.com',job_id:1}))[0],200);
+ assert.equal((await json(base,'/api/candidates','POST',
+   {name:'Other',email:'PERSON@example.com',job_id:1}))[0],409);
+ assert.equal((await json(base,'/api/candidates','POST',
+   {name:'Same applicant, different role',email:'PERSON@example.com',job_id:2}))[0],200);
+ const [,all]=await json(base,'/api/candidates');
+ assert.equal(all.length,2);
+});
